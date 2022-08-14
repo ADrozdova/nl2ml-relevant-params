@@ -1,0 +1,103 @@
+import ast
+import pandas as pd
+import numpy as np
+
+import re
+
+
+def get_func_params(notebook_cells):
+    cells = []
+    lengths = []
+    for cell in notebook_cells.code_block:
+        format_ = f'b"'
+        format_hat = f"b'"
+        if cell[:2] == format_ or cell[:2] == format_hat:
+            cell = eval(cell)
+            cell = cell.decode('utf-8')
+
+        cell = cell.replace("<br>", "\n")
+
+        if cell.find("%matplotlib inline") > -1:
+            cell = cell.replace("%matplotlib inline", "")
+
+        cell = cell.strip()
+
+        code = cell
+        for line in cell.split("\n"):
+            if len(line.strip()) > 0 and line.strip()[0] == "!":
+                code = code.replace(line, "")
+            if line.find("%time") > -1:
+                line_ = line.replace("%time", "").strip()
+                code = code.replace(line, line_)
+
+        cells.append(code)
+        lengths.append(len(code.split("\n")))
+
+    lengths = np.cumsum(lengths)
+    cb_ids = list(notebook_cells.code_block_id)
+    gv_ids = list(notebook_cells.graph_vertex_id)
+    marks = list(notebook_cells.marks)
+
+    cells = "\n".join(cells)
+    cells_lines = cells.split("\n")
+
+    result = []  # {codeblock_id, f_name, params}
+    parsed = ast.parse(cells)
+
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Call):
+            params = []
+
+            line_call = cells_lines[node.lineno - 1][node.col_offset:node.end_col_offset+1]
+            idx = line_call.rfind("(")
+
+            arg_1 = line_call.split(".")[0]
+            arg = arg_1.lower()
+
+            LIB_NAMES= ["pd", "pandas", "numpy", "np", "plt", "sklearn", "torch", "tf"]
+            WHITELIST = ["df", "train", "test", "ax", "x", "y"]
+
+            def check_whitelist(arg, wl):
+                for word in wl:
+                    if word in arg:
+                        return True
+                return False
+
+            if arg_1 not in LIB_NAMES:
+                if check_whitelist(arg, WHITELIST):
+                    params.append(arg_1)
+
+            lc_args = line_call[idx+1:]
+            if len(lc_args) > 0 and not lc_args[-1].isalpha():
+                lc_args = lc_args[:-1]
+
+            lc_args = re.split(",\s*", lc_args)
+            for arg in lc_args:
+                if len(arg) == 1 and not arg.isalpha():
+                    pass
+                elif "=" in arg:
+                    pass
+                else:
+                    if arg != "":
+                        params.append(arg)
+
+            name = line_call[:idx]
+
+            pos_idx = np.where(lengths > node.lineno - 1)[0][0]
+            result.append({"code_block_id": cb_ids[pos_idx], "graph_vertex_id": gv_ids[pos_idx],
+                           "marks": marks[pos_idx], "f_name": name, "params": params})
+
+    return result
+
+
+def codeblocks_params(df):
+    notebooks_grouped = df.groupby("kaggle_id").groups
+
+    all_params = pd.DataFrame(columns=["code_block_id", "f_name", "params", "graph_vertex_id", "marks"])
+
+    for idx in notebooks_grouped.keys():
+        notebook = df.iloc[notebooks_grouped[idx]].reset_index(drop=True)
+        new_params = get_func_params(notebook)
+        all_params = all_params.append(new_params, ignore_index=True)
+
+    return all_params
