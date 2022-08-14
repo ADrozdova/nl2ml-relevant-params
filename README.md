@@ -1,1 +1,1 @@
-# nl2ml_relevant_params
+# Extracting relevant parameters from code (part of NL2ML project)
