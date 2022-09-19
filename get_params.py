@@ -5,6 +5,9 @@ import numpy as np
 import re
 
 
+import re
+
+
 def get_func_params(notebook_cells):
     cells = []
     lengths = []
@@ -48,8 +51,9 @@ def get_func_params(notebook_cells):
         if isinstance(node, ast.Call):
             params = []
 
-            line_call = cells_lines[node.lineno - 1][node.col_offset:node.end_col_offset+1]
+            line_call = cells_lines[node.lineno - 1][node.col_offset:node.end_col_offset]
             idx = line_call.rfind("(")
+
 
             arg_1 = line_call.split(".")[0]
             arg = arg_1.lower()
@@ -57,7 +61,14 @@ def get_func_params(notebook_cells):
             LIB_NAMES= ["pd", "pandas", "numpy", "np", "plt", "sklearn", "torch", "tf"]
             WHITELIST = ["df", "train", "test", "ax", "x", "y"]
 
+            name = line_call[:idx]
+            pos_idx = np.where(lengths > node.lineno - 1)[0][0]
+
             def check_whitelist(arg, wl):
+                if name.split(".")[-1] == 'predict': #  models can have too many different names. class: model predict
+                    return True
+                if name.split(".")[-1] == 'fit' and gv_ids[pos_idx] == 26:  # class: model fit
+                    return True
                 for word in wl:
                     if word in arg:
                         return True
@@ -67,23 +78,17 @@ def get_func_params(notebook_cells):
                 if check_whitelist(arg, WHITELIST):
                     params.append(arg_1)
 
-            lc_args = line_call[idx+1:]
-            if len(lc_args) > 0 and not lc_args[-1].isalpha():
-                lc_args = lc_args[:-1]
+            for arg in node.args:
+                params.append(cells_lines[arg.lineno - 1][arg.col_offset:arg.end_col_offset])
+            for keyw in node.keywords:
+                keyw_arg = cells_lines[keyw.lineno - 1][keyw.col_offset:keyw.end_col_offset].split("=")[-1]
+                if name.split(".")[-1] == 'drop' and keyw.arg == "columns":
+                    params.append(keyw_arg)
+                if name.split(".")[-1] == 'dropna' and keyw.arg == "subset":
+                    params.append(keyw_arg)
+                if name.split(".")[-1] == 'barplot' and (keyw.arg in ["x", "y", "data"]):
+                    params.append(keyw_arg)
 
-            lc_args = re.split(",\s*", lc_args)
-            for arg in lc_args:
-                if len(arg) == 1 and not arg.isalpha():
-                    pass
-                elif "=" in arg:
-                    pass
-                else:
-                    if arg != "":
-                        params.append(arg)
-
-            name = line_call[:idx]
-
-            pos_idx = np.where(lengths > node.lineno - 1)[0][0]
             result.append({"code_block_id": cb_ids[pos_idx], "graph_vertex_id": gv_ids[pos_idx],
                            "marks": marks[pos_idx], "f_name": name, "params": params})
 
